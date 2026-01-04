@@ -107,6 +107,18 @@ async def general_exception_handler(request: Request, exc: Exception):
 app.include_router(tasks_router)
 
 
+@app.get("/", tags=["system"])
+async def root():
+    """API root endpoint with service information."""
+    return {
+        "service": "Evolution of Todo API",
+        "version": "0.1.0",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
 @app.get("/health", tags=["system"])
 async def health_check():
     """System health check endpoint."""
