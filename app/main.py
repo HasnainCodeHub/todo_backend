@@ -24,11 +24,11 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # Next.js dev server
+        "http://localhost:3000",          # Next.js dev server
         "http://127.0.0.1:3000",
-        "https://todo-evolution-liart.vercel.app",  # Vercel frontend production
-        "https://todo-evaluation.vercel.app/",  # Vercel alias (if available)
-        "https://evaluation-todo.vercel.app",  # Backend itself (for health checks)
+        "https://todo-evolution-liart.vercel.app",  # Vercel production
+        "https://todo-evaluation.vercel.app",       # Vercel alias / new frontend
+        "https://evaluation-todo.vercel.app",       # Backend / health checks
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -106,6 +106,7 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(tasks_router)
+
 
 
 @app.get("/", tags=["system"])
