@@ -1,15 +1,16 @@
 # Task CRUD Operations
-# Phase 2.1: Database Persistence Layer
+# Phase 2.1: Database Persistence Layer with Enhanced Transaction Handling
 # Task ID: T015-T020 (US2: User Scoping, US3: Full CRUD)
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 from sqlmodel import Session, select
 
 from ..database import get_session
 from ..models import Task
 from ..schemas import TaskResponse
+from ..services.task_service import task_service
 
 
 def _task_to_response(task: Task) -> TaskResponse:
@@ -35,7 +36,7 @@ def create_task(
     description: Optional[str] = None,
 ) -> TaskResponse:
     """
-    Create a new task for a user.
+    Create a new task for a user with enhanced transaction handling and retry logic.
 
     Implements FR-004: create_task function that accepts task data and user_id,
     returns the created task with generated ID.
@@ -48,24 +49,16 @@ def create_task(
     Returns:
         The created Task as TaskResponse (serialization-safe)
     """
-    task = Task(
-        title=title,
-        user_id=user_id,
-        description=description,
-        completed=False,
-    )
+    # Use the enhanced TaskService for transaction handling and retries
+    task = task_service.create_task(title=title, description=description, user_id=user_id)
 
-    with get_session() as session:
-        session.add(task)
-        session.commit()
-        session.refresh(task)
-        # Convert to Pydantic model INSIDE session to avoid DetachedInstanceError
-        return _task_to_response(task)
+    # Convert to Pydantic model
+    return _task_to_response(task)
 
 
 def task_exists_any_user(task_id: int) -> bool:
     """
-    Check if a task exists, regardless of user ownership.
+    Check if a task exists, regardless of user ownership with connection resilience.
 
     Implements US3: Cross-User Access Prevention - supports 403 vs 404 distinction.
 
@@ -77,15 +70,12 @@ def task_exists_any_user(task_id: int) -> bool:
     Returns:
         True if task exists in database, False otherwise
     """
-    with get_session() as session:
-        statement = select(Task).where(Task.id == task_id)
-        result = session.exec(statement).first()
-        return result is not None
+    return task_service.task_exists(task_id)
 
 
 def get_task(task_id: int, user_id: Optional[str] = None) -> Optional[TaskResponse]:
     """
-    Retrieve a single task by ID.
+    Retrieve a single task by ID with enhanced transaction handling.
 
     Implements FR-005: get_task function that retrieves a single task by ID.
 
@@ -96,44 +86,41 @@ def get_task(task_id: int, user_id: Optional[str] = None) -> Optional[TaskRespon
     Returns:
         The TaskResponse if found, None otherwise
     """
-    with get_session() as session:
-        statement = select(Task).where(Task.id == task_id)
-
-        # Apply user scoping if user_id provided
-        if user_id is not None:
-            statement = statement.where(Task.user_id == user_id)
-
-        result = session.exec(statement).first()
-        if result is None:
+    # If user_id is provided, use it for ownership verification
+    if user_id is not None:
+        task = task_service.get_task_by_id(task_id, user_id)
+        if task is None:
             return None
-        # Convert to Pydantic model INSIDE session
-        return _task_to_response(result)
+        return _task_to_response(task)
+    else:
+        # Without user_id, we can't verify ownership, so return None
+        # This maintains the security model
+        return None
 
 
 def get_tasks(user_id: Optional[str] = None) -> list[TaskResponse]:
     """
-    Retrieve all tasks, optionally filtered by user_id.
+    Retrieve all tasks for a user with enhanced transaction handling and retry logic.
 
     Implements FR-006: get_tasks function that retrieves all tasks,
     optionally filtered by user_id.
 
     Args:
         user_id: Optional user_id to filter tasks by owner.
-                 If None, returns all tasks (admin/debug use case).
+                 If None, returns empty list to maintain security model
 
     Returns:
         List of TaskResponse objects (serialization-safe)
     """
-    with get_session() as session:
-        statement = select(Task).order_by(Task.created_at.desc())
+    # Only proceed if user_id is provided to maintain security model
+    if user_id is None:
+        return []
 
-        # Apply user scoping if user_id provided
-        if user_id is not None:
-            statement = statement.where(Task.user_id == user_id)
+    # Use the enhanced TaskService for connection resilience
+    tasks = task_service.get_tasks(user_id)
 
-        results = session.exec(statement).all()
-        # Convert ALL tasks to Pydantic models INSIDE session
-        return [_task_to_response(task) for task in results]
+    # Convert all tasks to Pydantic models
+    return [_task_to_response(task) for task in tasks]
 
 
 def update_task(
@@ -144,7 +131,7 @@ def update_task(
     completed: Optional[bool] = None,
 ) -> Optional[TaskResponse]:
     """
-    Update an existing task's properties.
+    Update an existing task's properties with enhanced transaction handling and retry logic.
 
     Implements FR-007: update_task function that modifies existing task properties.
 
@@ -158,38 +145,59 @@ def update_task(
     Returns:
         The updated TaskResponse if found and owned by user, None otherwise
     """
-    with get_session() as session:
-        # Find task with user scoping
-        statement = select(Task).where(
-            Task.id == task_id,
-            Task.user_id == user_id
-        )
-        task = session.exec(statement).first()
+    # If completed is provided, we need to handle this differently since the original
+    # service method doesn't support updating completed status
+    if completed is not None:
+        # Use direct database operation for this case
+        with get_session() as session:
+            try:
+                # Find task with user scoping
+                statement = select(Task).where(
+                    Task.id == task_id,
+                    Task.user_id == user_id
+                )
+                task = session.exec(statement).first()
 
-        if task is None:
+                if task is None:
+                    return None
+
+                # Update provided fields
+                if title is not None:
+                    task.title = title
+                if description is not None:
+                    task.description = description
+                if completed is not None:
+                    task.completed = completed
+
+                # Update timestamp
+                task.updated_at = datetime.now(timezone.utc)
+
+                session.add(task)
+                session.commit()
+                session.refresh(task)
+                # Convert to Pydantic model INSIDE session
+                return _task_to_response(task)
+            except Exception as e:
+                session.rollback()
+                raise
+    else:
+        # Use the enhanced TaskService for update without completed field
+        updated_task = task_service.update_task(
+            task_id=task_id,
+            user_id=user_id,
+            title=title,
+            description=description
+        )
+
+        if updated_task is None:
             return None
 
-        # Update provided fields
-        if title is not None:
-            task.title = title
-        if description is not None:
-            task.description = description
-        if completed is not None:
-            task.completed = completed
-
-        # Update timestamp
-        task.updated_at = datetime.now(timezone.utc)
-
-        session.add(task)
-        session.commit()
-        session.refresh(task)
-        # Convert to Pydantic model INSIDE session
-        return _task_to_response(task)
+        return _task_to_response(updated_task)
 
 
 def delete_task(task_id: int, user_id: str) -> bool:
     """
-    Delete a task by ID.
+    Delete a task by ID with enhanced transaction handling and retry logic.
 
     Implements FR-008: delete_task function that removes a task by ID.
 
@@ -200,25 +208,13 @@ def delete_task(task_id: int, user_id: str) -> bool:
     Returns:
         True if task was deleted, False if not found or not owned by user
     """
-    with get_session() as session:
-        # Find task with user scoping
-        statement = select(Task).where(
-            Task.id == task_id,
-            Task.user_id == user_id
-        )
-        task = session.exec(statement).first()
-
-        if task is None:
-            return False
-
-        session.delete(task)
-        session.commit()
-        return True
+    # Use the enhanced TaskService for transaction safety and retries
+    return task_service.delete_task(task_id, user_id)
 
 
 def toggle_complete(task_id: int, user_id: str) -> Optional[TaskResponse]:
     """
-    Toggle the completed status of a task.
+    Toggle the completed status of a task with enhanced transaction handling.
 
     Implements FR-009: toggle_complete function that flips the completed status.
 
@@ -229,25 +225,38 @@ def toggle_complete(task_id: int, user_id: str) -> Optional[TaskResponse]:
     Returns:
         The updated TaskResponse if found and owned by user, None otherwise
     """
-    with get_session() as session:
-        # Find task with user scoping
-        statement = select(Task).where(
-            Task.id == task_id,
-            Task.user_id == user_id
-        )
-        task = session.exec(statement).first()
+    # Use the enhanced TaskService for transaction safety and retries
+    updated_task = task_service.complete_task(task_id, user_id)
 
-        if task is None:
-            return None
+    if updated_task is None:
+        return None
 
-        # Toggle completion status
-        task.completed = not task.completed
+    return _task_to_response(updated_task)
 
-        # Update timestamp
-        task.updated_at = datetime.now(timezone.utc)
 
-        session.add(task)
-        session.commit()
-        session.refresh(task)
-        # Convert to Pydantic model INSIDE session
-        return _task_to_response(task)
+def get_task_stats(user_id: str) -> dict:
+    """
+    Get statistics for user's tasks with connection resilience.
+
+    Args:
+        user_id: ID of the user to get stats for
+
+    Returns:
+        Dictionary with task statistics
+    """
+    return task_service.get_task_stats(user_id)
+
+
+def bulk_update_tasks(task_ids: List[int], user_id: str, **updates) -> int:
+    """
+    Update multiple tasks for a user in a single transaction with retry logic.
+
+    Args:
+        task_ids: List of task IDs to update
+        user_id: ID of the user who owns the tasks
+        **updates: Fields to update
+
+    Returns:
+        Number of tasks successfully updated
+    """
+    return task_service.bulk_update_tasks(task_ids, user_id, **updates)

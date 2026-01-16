@@ -1,28 +1,83 @@
+"""Pydantic schemas for task validation in MCP Server."""
+
+from pydantic import BaseModel, Field
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional, List
 
 
-class TaskCreate(BaseModel):
-    """Request model for creating a task."""
+class TaskCreateRequest(BaseModel):
+    """Schema for creating a new task."""
+
     title: str = Field(..., min_length=1, max_length=200)
-    description: str | None = Field(None, max_length=1000)
+    description: Optional[str] = Field(None, max_length=1000)
 
 
-class TaskUpdate(BaseModel):
-    """Request model for updating a task."""
-    title: str | None = Field(None, min_length=1, max_length=200)
-    description: str | None = Field(None, max_length=1000)
-    completed: bool | None = None
+class TaskUpdateRequest(BaseModel):
+    """Schema for updating an existing task."""
+
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = Field(None, max_length=1000)
+    completed: Optional[bool] = None
 
 
 class TaskResponse(BaseModel):
-    """Response model for task data."""
+    """Schema for task response."""
+
     id: int
-    user_id: str
     title: str
-    description: str | None
+    description: Optional[str]
     completed: bool
+    user_id: str
     created_at: datetime
     updated_at: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+
+class ListTasksRequest(BaseModel):
+    """Schema for listing tasks request."""
+
+    status: str = Field(default="all", pattern=r"^(all|pending|completed)$")
+
+
+class ListTasksResponse(BaseModel):
+    """Schema for listing tasks response."""
+
+    tasks: List[TaskResponse]
+
+
+class TaskIdRequest(BaseModel):
+    """Schema for requests that require a task ID."""
+
+    task_id: int
+
+
+class SuccessResponse(BaseModel):
+    """Schema for successful operation responses."""
+
+    success: bool
+
+
+class ErrorResponse(BaseModel):
+    """Schema for error responses."""
+
+    error: dict
+
+
+class AddTaskResponse(BaseModel):
+    """Schema for add_task response."""
+
+    success: bool
+    task: TaskResponse
+
+
+class CompleteTaskResponse(BaseModel):
+    """Schema for complete_task response."""
+
+    success: bool
+    task: TaskResponse
+
+
+class DeleteTaskResponse(BaseModel):
+    """Schema for delete_task response."""
+
+    success: bool
+    deleted_task_id: int

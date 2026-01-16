@@ -8,7 +8,7 @@ from ..crud import task as crud
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
-@router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 async def create_task(
     payload: TaskCreate,
     current_user: AuthenticatedUser = Depends(get_current_user)
@@ -27,7 +27,7 @@ async def create_task(
         )
 
 
-@router.get("/", response_model=List[TaskResponse])
+@router.get("", response_model=List[TaskResponse])
 async def list_tasks(current_user: AuthenticatedUser = Depends(get_current_user)):
     """List all tasks for the current user."""
     try:

@@ -1,93 +1,112 @@
-# Database Module
-# Phase 2.1: Database Persistence Layer
-# Task ID: T006-T008 (Foundational), T022-T024 (US4: Connection Management)
+"""Database module for MCP Server using SQLModel with Neon PostgreSQL and enhanced resilience."""
 
-import logging
+from sqlmodel import create_engine, Session
 from contextlib import contextmanager
-from typing import Generator
-
-from sqlmodel import Session, SQLModel, create_engine
-
-from .config import get_settings
+from .config import settings
+from sqlalchemy.pool import QueuePool, StaticPool
+from sqlalchemy import event
+import logging
+import os
 
 logger = logging.getLogger(__name__)
 
-# Global engine instance - created once, shared across the application
-_engine = None
+# Determine the database URL - use SQLite for testing if no URL provided
+_database_url = settings.database_url
+if not _database_url or _database_url == "":
+    # Use in-memory SQLite for testing
+    _database_url = "sqlite:///:memory:"
+    logger.warning("No DATABASE_URL set, using in-memory SQLite for testing")
+elif _database_url.startswith("postgresql://") or _database_url.startswith("postgres://"):
+    # Convert to psycopg2 driver format
+    _database_url = _database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    _database_url = _database_url.replace("postgres://", "postgresql+psycopg2://", 1)
+
+# Configure engine based on database type
+if _database_url.startswith("sqlite"):
+    # SQLite configuration (for testing)
+    engine = create_engine(
+        _database_url,
+        echo=settings.debug,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,  # Use StaticPool for SQLite
+    )
+else:
+    # PostgreSQL configuration (for production)
+    engine = create_engine(
+        _database_url,
+        echo=settings.debug,  # Log SQL queries in debug mode
+        pool_pre_ping=True,  # Verify connections before use (critical for Neon serverless)
+        pool_size=5,  # Number of connection pools
+        max_overflow=10,  # Additional connections beyond pool_size
+        pool_recycle=300,  # Recycle connections after 5 minutes (recommended for Neon)
+        pool_timeout=30,  # Time to wait for a connection from the pool
+        poolclass=QueuePool,  # Use QueuePool for thread safety
+        connect_args={
+            "connect_timeout": 10,  # Timeout for establishing connection
+            "application_name": "todo-backend",  # Application name for monitoring
+        },
+    )
+
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Set SQLite pragmas if using SQLite (for local development)."""
+    # Check if this is a SQLite connection by checking the module name
+    connection_module = type(dbapi_connection).__module__
+    if 'sqlite' in connection_module.lower():
+        cursor = dbapi_connection.cursor()
+        # Enable WAL mode for better concurrency
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA cache_size=1000")
+        cursor.close()
 
 
 def get_engine():
-    """
-    Get or create the database engine.
-
-    Implements FR-011: Support Neon Serverless PostgreSQL.
-
-    The engine is created once and cached for reuse.
-    Uses SSL mode required for Neon connections.
-    """
-    global _engine
-
-    if _engine is None:
-        settings = get_settings()
-
-        # Create engine with connection arguments for Neon
-        # sslmode=require is typically in the connection string from Neon
-        _engine = create_engine(
-            settings.database_url_sync,
-            echo=False,  # Set to True for SQL debugging
-            pool_pre_ping=True,  # Verify connections before use
-        )
-
-    return _engine
+    """Get the database engine instance."""
+    return engine
 
 
 @contextmanager
-def get_session() -> Generator[Session, None, None]:
-    """
-    Context manager for database sessions.
-
-    Implements proper session lifecycle management:
-    - Creates a new session
-    - Yields it for use
-    - Commits on success
-    - Rolls back on exception
-    - Always closes the session
-
-    Usage:
-        with get_session() as session:
-            # Use session for database operations
-            session.add(task)
-            session.commit()
-    """
-    engine = get_engine()
+def get_session():
+    """Get a database session using context manager with enhanced error handling."""
     session = Session(engine)
-
     try:
         yield session
-        session.commit()
-    except Exception:
+    except Exception as e:
         session.rollback()
+        logger.error(f"Database session error: {str(e)}")
         raise
     finally:
+        # Explicitly close the session to return connection to pool
         session.close()
 
 
-def init_db() -> None:
-    """
-    Initialize database tables.
+def init_db():
+    """Initialize the database by creating all tables."""
+    from .models.task import Task  # Import here to avoid circular imports
+    from .models.conversation import Conversation, Message  # Phase 3: Chat tables
+    from sqlmodel import SQLModel
 
-    Implements FR-012: Function to initialize database tables on first run.
-
-    Uses SQLModel.metadata.create_all() which is idempotent -
-    safe to run multiple times, only creates tables that don't exist.
-
-    Note: This does NOT use migrations (FR-017 constraint).
-    """
-    logger.info("  → Importing database models...")
-    # Import models to ensure they're registered with SQLModel metadata
-    from .models import Task  # noqa: F401
-
-    logger.info("  → Creating database tables...")
-    engine = get_engine()
+    # Create all tables defined in SQLModel models
     SQLModel.metadata.create_all(engine)
-    logger.info(f"  → Tables in metadata: {list(SQLModel.metadata.tables.keys())}")
+    logger.info("Database tables created successfully")
+
+
+def test_connection():
+    """Test the database connection."""
+    try:
+        with Session(engine) as session:
+            # Execute a simple query to test the connection
+            session.execute("SELECT 1")
+            logger.info("Database connection test successful")
+            return True
+    except Exception as e:
+        logger.error(f"Database connection test failed: {str(e)}")
+        return False
+
+
+if __name__ == "__main__":
+    # Initialize database when run directly
+    init_db()
+    print("Database initialized successfully!")
