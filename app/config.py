@@ -9,8 +9,20 @@ def _default_mcp_server_url() -> str:
     """Compute default MCP server URL with Vercel auto-detection.
 
     Called only when MCP_SERVER_URL is not set in environment or .env file.
-    Vercel automatically sets VERCEL_URL (without protocol prefix).
+
+    VERCEL_URL is deployment-specific and changes on every deploy. Preview
+    deployments at that URL are protected by Vercel Authentication, causing
+    401 errors when the agent tries to connect to the MCP endpoint.
+
+    VERCEL_PROJECT_PRODUCTION_URL is the stable production alias (e.g.
+    todo-backend-xi-eosin.vercel.app) and is NOT gated by Vercel Auth.
+    Always prefer it over VERCEL_URL.
     """
+    # Stable production URL — present on all Vercel deployments since late 2023.
+    production_url = os.getenv("VERCEL_PROJECT_PRODUCTION_URL", "")
+    if production_url:
+        return f"https://{production_url}/mcp"
+    # Deployment-specific URL — only use as last resort (may trigger Vercel Auth).
     vercel_url = os.getenv("VERCEL_URL", "")
     if vercel_url:
         return f"https://{vercel_url}/mcp"
