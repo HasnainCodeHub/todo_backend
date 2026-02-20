@@ -7,15 +7,24 @@ Tools access the user via get_current_mcp_user() - no authorization parameter ne
 
 from typing import Dict, Any
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from ..crud.task import create_task, get_tasks, update_task, delete_task, toggle_complete, get_task_stats, bulk_update_tasks
 from ..dependencies.mcp_auth_context import get_current_mcp_user
+
+# Disable FastMCP's built-in DNS rebinding protection.
+# - On Vercel (HTTPS), TLS already verifies the host — this check is redundant.
+# - The /mcp endpoint is protected by MCPAuthMiddleware (JWT validation), so
+#   unauthenticated requests are rejected before any tool is invoked.
+# - Keeping it enabled blocks the production domain with a 421 error.
+_transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
 # Create FastMCP application with stateless HTTP transport
 mcp_app = FastMCP(
     name="todo-mcp-server",
     stateless_http=True,
     json_response=True,
+    transport_security=_transport_security,
 )
 
 
