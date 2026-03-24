@@ -12,6 +12,8 @@ from ..models import Task
 from ..schemas import TaskResponse
 from ..services.task_service import task_service
 
+_UNSET = object()
+
 
 def _task_to_response(task: Task) -> TaskResponse:
     """
@@ -24,6 +26,9 @@ def _task_to_response(task: Task) -> TaskResponse:
         user_id=task.user_id,
         title=task.title,
         description=task.description,
+        priority=task.priority,
+        due_date=task.due_date,
+        category=task.category,
         completed=task.completed,
         created_at=task.created_at,
         updated_at=task.updated_at,
@@ -34,6 +39,9 @@ def create_task(
     title: str,
     user_id: str,
     description: Optional[str] = None,
+    priority: str = "medium",
+    due_date: Optional[datetime] = None,
+    category: Optional[str] = None,
 ) -> TaskResponse:
     """
     Create a new task for a user with enhanced transaction handling and retry logic.
@@ -50,7 +58,14 @@ def create_task(
         The created Task as TaskResponse (serialization-safe)
     """
     # Use the enhanced TaskService for transaction handling and retries
-    task = task_service.create_task(title=title, description=description, user_id=user_id)
+    task = task_service.create_task(
+        title=title,
+        description=description,
+        user_id=user_id,
+        priority=priority,
+        due_date=due_date,
+        category=category,
+    )
 
     # Convert to Pydantic model
     return _task_to_response(task)
@@ -126,8 +141,11 @@ def get_tasks(user_id: Optional[str] = None) -> list[TaskResponse]:
 def update_task(
     task_id: int,
     user_id: str,
-    title: Optional[str] = None,
-    description: Optional[str] = None,
+    title: object = _UNSET,
+    description: object = _UNSET,
+    priority: object = _UNSET,
+    due_date: object = _UNSET,
+    category: object = _UNSET,
     completed: Optional[bool] = None,
 ) -> Optional[TaskResponse]:
     """
@@ -162,10 +180,16 @@ def update_task(
                     return None
 
                 # Update provided fields
-                if title is not None:
+                if title is not _UNSET:
                     task.title = title
-                if description is not None:
+                if description is not _UNSET:
                     task.description = description
+                if priority is not _UNSET:
+                    task.priority = priority
+                if due_date is not _UNSET:
+                    task.due_date = due_date
+                if category is not _UNSET:
+                    task.category = category
                 if completed is not None:
                     task.completed = completed
 
@@ -186,7 +210,10 @@ def update_task(
             task_id=task_id,
             user_id=user_id,
             title=title,
-            description=description
+            description=description,
+            priority=priority,
+            due_date=due_date,
+            category=category,
         )
 
         if updated_task is None:

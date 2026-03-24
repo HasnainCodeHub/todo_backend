@@ -10,6 +10,9 @@ class TaskBase(SQLModel):
 
     title: str = Field(min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=1000)
+    priority: str = Field(default="medium", max_length=10)
+    due_date: Optional[datetime] = Field(default=None)
+    category: Optional[str] = Field(default=None, max_length=50)
     completed: bool = Field(default=False)
     user_id: str = Field(index=True)  # Index for efficient user-based queries
 
@@ -27,4 +30,7 @@ class TaskUpdate(SQLModel):
 
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = Field(default=None, max_length=1000)
+    priority: Optional[str] = Field(default=None, max_length=10)
+    due_date: Optional[datetime] = Field(default=None)
+    category: Optional[str] = Field(default=None, max_length=50)
     completed: Optional[bool] = None

@@ -4,7 +4,7 @@ from sqlmodel import create_engine, Session
 from contextlib import contextmanager
 from .config import settings
 from sqlalchemy.pool import QueuePool, StaticPool
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 import logging
 import os
 
@@ -90,7 +90,37 @@ def init_db():
 
     # Create all tables defined in SQLModel models
     SQLModel.metadata.create_all(engine)
+    _ensure_task_schema_columns()
     logger.info("Database tables created successfully")
+
+
+def _ensure_task_schema_columns():
+    """Apply idempotent task-table schema updates for existing databases."""
+    inspector = inspect(engine)
+
+    if "task" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("task")}
+    statements = []
+
+    if "priority" not in existing_columns:
+        statements.append("ALTER TABLE task ADD COLUMN priority VARCHAR(10) NOT NULL DEFAULT 'medium'")
+    if "due_date" not in existing_columns:
+        statements.append("ALTER TABLE task ADD COLUMN due_date TIMESTAMP NULL")
+    if "category" not in existing_columns:
+        statements.append("ALTER TABLE task ADD COLUMN category VARCHAR(50) NULL")
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+    logger.info("Applied task schema column updates for: %s", ", ".join(
+        statement.split(" ADD COLUMN ", 1)[1].split(" ", 1)[0] for statement in statements
+    ))
 
 
 def test_connection():

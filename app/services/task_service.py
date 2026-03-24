@@ -12,6 +12,7 @@ from ..database import get_session
 from ..models.task import Task, TaskUpdate
 
 logger = logging.getLogger(__name__)
+_UNSET = object()
 
 
 class TaskService:
@@ -26,7 +27,15 @@ class TaskService:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10)
     )
-    def create_task(self, title: str, description: Optional[str], user_id: str) -> Task:
+    def create_task(
+        self,
+        title: str,
+        description: Optional[str],
+        user_id: str,
+        priority: str = "medium",
+        due_date: Optional[datetime] = None,
+        category: Optional[str] = None,
+    ) -> Task:
         """
         Create a new task for a user with transaction safety and retry logic.
 
@@ -44,6 +53,9 @@ class TaskService:
         task = Task(
             title=title,
             description=description,
+            priority=priority,
+            due_date=due_date,
+            category=category,
             user_id=user_id,
             completed=False,
             created_at=datetime.utcnow(),
@@ -131,8 +143,16 @@ class TaskService:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10)
     )
-    def update_task(self, task_id: int, user_id: str, title: Optional[str] = None,
-                    description: Optional[str] = None) -> Optional[Task]:
+    def update_task(
+        self,
+        task_id: int,
+        user_id: str,
+        title: object = _UNSET,
+        description: object = _UNSET,
+        priority: object = _UNSET,
+        due_date: object = _UNSET,
+        category: object = _UNSET,
+    ) -> Optional[Task]:
         """
         Update a task's title and/or description with transaction safety.
 
@@ -155,10 +175,16 @@ class TaskService:
                     return None
 
                 # Update fields if provided
-                if title is not None:
+                if title is not _UNSET:
                     task.title = title
-                if description is not None:
+                if description is not _UNSET:
                     task.description = description
+                if priority is not _UNSET:
+                    task.priority = priority
+                if due_date is not _UNSET:
+                    task.due_date = due_date
+                if category is not _UNSET:
+                    task.category = category
 
                 task.updated_at = datetime.utcnow()
                 session.add(task)

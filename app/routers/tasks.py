@@ -18,6 +18,9 @@ async def create_task(
         return crud.create_task(
             title=payload.title,
             description=payload.description,
+            priority=payload.priority,
+            due_date=payload.due_date,
+            category=payload.category,
             user_id=current_user.user_id
         )
     except Exception as e:
@@ -73,12 +76,11 @@ async def update_task(
 ):
     """Update a specific task."""
     try:
+        update_data = payload.model_dump(exclude_unset=True)
         task = crud.update_task(
             task_id=task_id,
             user_id=current_user.user_id,
-            title=payload.title,
-            description=payload.description,
-            completed=payload.completed
+            **update_data
         )
         if not task:
             # Check if task exists for any user to determine 403 vs 404
